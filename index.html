@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LO Action Bar</title>
+  <style>
+    :root {
+      --bg: #0b0d12;
+      --panel: #12151d;
+      --panel2: #171b25;
+      --line: #252b3a;
+      --txt: #e8ecf4;
+      --mut: #9098aa;
+      --good: #16a34a;
+      --bad: #dc2626;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--txt);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 12px;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    h1 {
+      font-size: 13px;
+      color: var(--mut);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+    .pill {
+      font-size: 10px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--mut);
+      white-space: nowrap;
+    }
+    .pill.sso { color: var(--good); border-color: var(--good); }
+    .pill.warn { color: #d97706; border-color: #d97706; }
+    .ctx {
+      font-size: 11px;
+      color: var(--mut);
+      margin-bottom: 10px;
+      word-break: break-word;
+      line-height: 1.35;
+    }
+    .section-title {
+      color: var(--mut);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin: 12px 0 6px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    button {
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 8px;
+      padding: 10px 9px;
+      min-height: 44px;
+      font-size: 12px;
+      font-weight: 650;
+      color: #fff;
+      cursor: pointer;
+      text-align: left;
+      line-height: 1.15;
+      background: var(--panel2);
+    }
+    button small {
+      display: block;
+      margin-top: 3px;
+      color: rgba(255,255,255,.72);
+      font-size: 10px;
+      font-weight: 500;
+    }
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: .42; cursor: not-allowed; }
+    .full { grid-column: 1 / 3; }
+    .active { background: #2563eb; }
+    .success { background: #0f766e; }
+    .recycle { background: #b7791f; }
+    .closed { background: #4b5563; }
+    .compliance { background: #b91c1c; }
+    .control { background: #6d28d9; }
+    .ops { background: #047857; }
+    .retention { background: #0369a1; }
+    #toast {
+      margin-top: 10px;
+      font-size: 12px;
+      padding: 9px 11px;
+      border-radius: 8px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--good);
+      color: var(--mut);
+      min-height: 18px;
+      line-height: 1.35;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>LO Action Bar</h1>
+    <span id="badge" class="pill warn">URL</span>
+  </header>
+  <div class="ctx" id="ctx">Resolving session...</div>
+  <div id="actions"></div>
+  <div id="toast">Ready.</div>
+
+  <script>
+    var BRIDGE_URL = "https://czzabvfzuxhpdcowgvam.supabase.co/functions/v1/lo-action-bridge";
+    var DECRYPT_URL = "https://czzabvfzuxhpdcowgvam.supabase.co/functions/v1/ghl-sso-decrypt";
+
+    var q = new URLSearchParams(location.search);
+    var contactId = q.get("contactId") || q.get("contact_id") || "";
+    var locationId = q.get("location") || q.get("locationId") || q.get("location_id") || "";
+    var userId = "";
+    var encryptedData = "";
+    var sessionSource = "url";
+    var actions = [];
+
+    function el(id) { return document.getElementById(id); }
+    function toast(message, ok) {
+      var t = el("toast");
+      t.textContent = message;
+      t.style.borderLeftColor = ok ? "#16a34a" : "#dc2626";
+    }
+    function setBadge() {
+      var b = el("badge");
+      b.textContent = sessionSource === "ghl-sso" ? "GHL SSO" : "URL";
+      b.className = sessionSource === "ghl-sso" ? "pill sso" : "pill warn";
+    }
+    function renderCtx() {
+      setBadge();
+      var contactText = contactId ? "Contact " + contactId.slice(0, 10) : "No contactId";
+      var locationText = locationId ? locationId : "no location";
+      el("ctx").textContent = contactText + " | " + locationText;
+    }
+    function requestSSO() {
+      return new Promise(function(resolve) {
+        var done = false;
+        function handler(ev) {
+          var d = ev.data || {};
+          if (d && d.message === "REQUEST_USER_DATA_RESPONSE") {
+            done = true;
+            window.removeEventListener("message", handler);
+            resolve(d.payload);
+          }
+        }
+        window.addEventListener("message", handler);
+        try { window.parent.postMessage({ message: "REQUEST_USER_DATA" }, "*"); } catch(e) {}
+        setTimeout(function() {
+          if (!done) {
+            window.removeEventListener("message", handler);
+            resolve(null);
+          }
+        }, 2500);
+      });
+    }
+    async function initSession() {
+      if (window.parent && window.parent !== window) {
+        try {
+          var enc = await requestSSO();
+          if (enc) {
+            encryptedData = enc;
+            var r = await fetch(DECRYPT_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ encryptedData: enc })
+            });
+            var d = await r.json().catch(function(){ return {}; });
+            if (d && d.ok) {
+              if (d.locationId) locationId = d.locationId;
+              if (d.userId) userId = d.userId;
+              if (d.contactId && !contactId) contactId = d.contactId;
+              sessionSource = "ghl-sso";
+            }
+          }
+        } catch(e) {}
+      }
+      renderCtx();
+      await loadActions();
+    }
+    function categoryLabel(category) {
+      var map = {
+        active: "Active",
+        success: "Success Path",
+        recycle: "Recycle",
+        closed: "Closed",
+        compliance: "Compliance",
+        control: "AI Control",
+        ops: "Ops",
+        retention: "Retention"
+      };
+      return map[category] || category || "Other";
+    }
+    function renderActions() {
+      var root = el("actions");
+      root.innerHTML = "";
+      if (!actions.length) {
+        root.innerHTML = '<div class="ctx">No actions found for this location.</div>';
+        return;
+      }
+      var grouped = {};
+      actions.forEach(function(action) {
+        var category = action.category || "other";
+        if (!grouped[category]) grouped[category] = [];
+        grouped[category].push(action);
+      });
+      Object.keys(grouped).forEach(function(category) {
+        var title = document.createElement("div");
+        title.className = "section-title";
+        title.textContent = categoryLabel(category);
+        root.appendChild(title);
+
+        var grid = document.createElement("div");
+        grid.className = "grid";
+        grouped[category].forEach(function(action) {
+          var btn = document.createElement("button");
+          btn.className = (action.category || "active") + (action.category === "compliance" ? " full" : "");
+          btn.type = "button";
+          btn.innerHTML = (action.short_label || action.label) + (action.stop_ai ? "<small>Stops AI</small>" : "");
+          btn.addEventListener("click", function() { executeAction(action); });
+          grid.appendChild(btn);
+        });
+        root.appendChild(grid);
+      });
+    }
+    async function loadActions() {
+      try {
+        var r = await fetch(BRIDGE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "list_actions",
+            locationId: locationId,
+            surface: "ghl"
+          })
+        });
+        var d = await r.json().catch(function(){ return {}; });
+        if (!d.ok) throw new Error(d.reason || "Could not load actions");
+        actions = d.actions || [];
+        renderActions();
+      } catch(e) {
+        toast("Could not load actions: " + e.message, false);
+      }
+    }
+    async function executeAction(action) {
+      if (!contactId) {
+        toast("No contact loaded.", false);
+        return;
+      }
+      if (!encryptedData) {
+        toast("Open inside GHL so SSO can authorize actions.", false);
+        return;
+      }
+      if (action.requires_confirmation) {
+        var ok = confirm(action.label + " for this contact?");
+        if (!ok) return;
+      }
+      toast("Running " + action.label + "...", true);
+      try {
+        var r = await fetch(BRIDGE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "execute",
+            actionId: action.action_id,
+            contactId: contactId,
+            locationId: locationId,
+            encryptedData: encryptedData,
+            surface: "ghl",
+            loUserId: userId
+          })
+        });
+        var d = await r.json().catch(function(){ return {}; });
+        if (!r.ok || d.ok === false) throw new Error(d.reason || "Action failed");
+        toast(action.label + " complete.", true);
+      } catch(e) {
+        toast(action.label + " failed: " + e.message, false);
+      }
+    }
+    initSession();
+  </script>
+</body>
+</html>
