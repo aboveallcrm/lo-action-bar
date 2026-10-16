@@ -129,12 +129,22 @@
     var encryptedData = "";
     var sessionSource = "url";
     var actions = [];
+    var G1_ACTION_IDS = {
+      human_takeover: true,
+      pause_ai: true
+    };
 
     function el(id) { return document.getElementById(id); }
+    function isG1Action(action) {
+      return !!action && Object.prototype.hasOwnProperty.call(action, "action_id") &&
+        typeof action.action_id === "string" &&
+        Object.prototype.hasOwnProperty.call(G1_ACTION_IDS, action.action_id) &&
+        G1_ACTION_IDS[action.action_id] === true;
+    }
     function toast(message, ok) {
       var t = el("toast");
       t.textContent = message;
-      t.style.borderLeftColor = ok ? "#16a34a" : "#dc2626";
+      t.style.borderLeftColor = ok === true ? "#16a34a" : ok === false ? "#dc2626" : "#9098aa";
     }
     function setBadge() {
       var b = el("badge");
@@ -230,7 +240,15 @@
           var btn = document.createElement("button");
           btn.className = (action.category || "active") + (action.category === "compliance" ? " full" : "");
           btn.type = "button";
-          btn.innerHTML = (action.short_label || action.label) + (action.stop_ai ? "<small>Stops AI</small>" : "");
+          btn.dataset.actionId = Object.prototype.hasOwnProperty.call(action, "action_id") &&
+              typeof action.action_id === "string" ? action.action_id : "";
+          btn.textContent = action.short_label || action.label || "Unavailable action";
+          btn.disabled = !isG1Action(action);
+          if (btn.disabled) {
+            var unavailable = document.createElement("small");
+            unavailable.textContent = "Unavailable";
+            btn.appendChild(unavailable);
+          }
           btn.addEventListener("click", function() { executeAction(action); });
           grid.appendChild(btn);
         });
@@ -249,14 +267,18 @@
           })
         });
         var d = await r.json().catch(function(){ return {}; });
-        if (!d.ok) throw new Error(d.reason || "Could not load actions");
-        actions = d.actions || [];
+        if (!r.ok || d.ok !== true || !Array.isArray(d.actions)) throw new Error("actions_unavailable");
+        actions = d.actions;
         renderActions();
       } catch(e) {
-        toast("Could not load actions: " + e.message, false);
+        toast("Actions unavailable. Refresh or reopen inside GHL.", false);
       }
     }
     async function executeAction(action) {
+      if (!isG1Action(action)) {
+        toast("Action unavailable. This control is not authorized.", false);
+        return;
+      }
       if (!contactId) {
         toast("No contact loaded.", false);
         return;
@@ -269,7 +291,7 @@
         var ok = confirm(action.label + " for this contact?");
         if (!ok) return;
       }
-      toast("Running " + action.label + "...", true);
+      toast("Requesting " + action.label + "...", null);
       try {
         var r = await fetch(BRIDGE_URL, {
           method: "POST",
@@ -285,10 +307,13 @@
           })
         });
         var d = await r.json().catch(function(){ return {}; });
-        if (!r.ok || d.ok === false) throw new Error(d.reason || "Action failed");
-        toast(action.label + " complete.", true);
+        if (!r.ok || d.ok !== true) {
+          toast("Could not verify this action. No completed hold is confirmed.", false);
+          return;
+        }
+        toast("Action result unavailable. No verified canonical receipt was returned.", false);
       } catch(e) {
-        toast(action.label + " failed: " + e.message, false);
+        toast("Could not verify this action. No completed hold is confirmed.", false);
       }
     }
     initSession();
