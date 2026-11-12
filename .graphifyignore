@@ -1,0 +1,7 @@
+# Extra Graphify scan exclusions (added on top of .gitignore and Graphify's built-in skips).
+# Built-in skips already cover node_modules, virtualenvs, build output, secrets, lockfiles, and graphify-out.
+vendor/
+generated/
+**/*.min.js
+**/*.map
+coverage/
